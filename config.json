@@ -1,0 +1,289 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09T00:00:00.000Z",
+    "Description": "For Trivy container vuln scanning CI/CD AWS Security Hub integration Blog Post",
+    "Parameters": {
+        "TrivyContainerName": {
+            "Type": "String",
+            "Default": "trivy-test",
+            "Description": "Container name to be populated by CodeBuild"
+        }
+    },
+    "Resources": {
+        "TrivyECR": {
+            "Type": "AWS::ECR::Repository"
+        },
+        "TrivyCodeCommit": {
+            "Type": "AWS::CodeCommit::Repository",
+            "Properties": {
+                "RepositoryDescription": "CodeCommit Repo for Trivy Vuln Scan CICD Pipeline",
+                "RepositoryName": "trivy-cicd-code-repo"
+            }
+        },
+        "CodeBuildServiceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "CodeBuildServiceRolePolicy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17T00:00:00.000Z",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "codecommit:GitPull"
+                                    ],
+                                    "Resource": null
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:GetObject",
+                                        "s3:GetObjectVersion",
+                                        "s3:PutObject",
+                                        "s3:GetBucketAcl",
+                                        "s3:GetBucketLocation"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "securityhub:BatchImportFindings"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ecr:GetDownloadUrlForLayer",
+                                        "ecr:BatchGetImage",
+                                        "ecr:BatchCheckLayerAvailability",
+                                        "ecr:PutImage",
+                                        "ecr:InitiateLayerUpload",
+                                        "ecr:UploadLayerPart",
+                                        "ecr:CompleteLayerUpload"
+                                    ],
+                                    "Resource": null
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17T00:00:00.000Z",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "codebuild.amazonaws.com"
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "CodePipelineServiceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "Policies": [
+                    {
+                        "PolicyName": "CodePipelineServiceRolePolicy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17T00:00:00.000Z",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "codecommit:CancelUploadArchive",
+                                        "codecommit:GetBranch",
+                                        "codecommit:GetCommit",
+                                        "codecommit:GetUploadArchiveStatus",
+                                        "codecommit:UploadArchive"
+                                    ],
+                                    "Resource": null
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "cloudwatch:*"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:*"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "codebuild:BatchGetBuilds",
+                                        "codebuild:StartBuild"
+                                    ],
+                                    "Resource": null
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17T00:00:00.000Z",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "codepipeline.amazonaws.com"
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "TrivyCodePipelineArtifactBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": null,
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": true,
+                    "BlockPublicPolicy": true,
+                    "IgnorePublicAcls": true,
+                    "RestrictPublicBuckets": true
+                },
+                "VersioningConfiguration": {
+                    "Status": "Enabled"
+                },
+                "BucketEncryption": {
+                    "ServerSideEncryptionConfiguration": [
+                        {
+                            "ServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "AES256"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "TrivyCodeBuild": {
+            "Type": "AWS::CodeBuild::Project",
+            "Properties": {
+                "Artifacts": {
+                    "Type": "CODEPIPELINE"
+                },
+                "Description": "For Security Hub Trivy Vuln Scanning Blog",
+                "Environment": {
+                    "ComputeType": "BUILD_GENERAL1_LARGE",
+                    "Image": "aws/codebuild/standard:3.0",
+                    "PrivilegedMode": true,
+                    "Type": "LINUX_CONTAINER",
+                    "EnvironmentVariables": [
+                        {
+                            "Name": "docker_img_name",
+                            "Value": null
+                        },
+                        {
+                            "Name": "docker_tag",
+                            "Value": "latest"
+                        },
+                        {
+                            "Name": "ecr_repo",
+                            "Value": null
+                        }
+                    ]
+                },
+                "LogsConfig": {
+                    "CloudWatchLogs": {
+                        "Status": "ENABLED"
+                    }
+                },
+                "Name": null,
+                "ServiceRole": null,
+                "Source": {
+                    "Type": "CODEPIPELINE"
+                }
+            }
+        },
+        "TrivyCodePipeline": {
+            "Type": "AWS::CodePipeline::Pipeline",
+            "Properties": {
+                "ArtifactStore": {
+                    "Location": null,
+                    "Type": "S3"
+                },
+                "Name": null,
+                "RestartExecutionOnUpdate": true,
+                "RoleArn": null,
+                "Stages": [
+                    {
+                        "Name": "Source",
+                        "Actions": [
+                            {
+                                "Name": "SourceAction",
+                                "ActionTypeId": {
+                                    "Category": "Source",
+                                    "Owner": "AWS",
+                                    "Version": 1,
+                                    "Provider": "CodeCommit"
+                                },
+                                "Configuration": {
+                                    "RepositoryName": null,
+                                    "BranchName": "master"
+                                },
+                                "OutputArtifacts": [
+                                    {
+                                        "Name": "SourceOutput"
+                                    }
+                                ],
+                                "RunOrder": 1
+                            }
+                        ]
+                    },
+                    {
+                        "Name": "Build",
+                        "Actions": [
+                            {
+                                "InputArtifacts": [
+                                    {
+                                        "Name": "SourceOutput"
+                                    }
+                                ],
+                                "Name": "BuildAction",
+                                "ActionTypeId": {
+                                    "Category": "Build",
+                                    "Owner": "AWS",
+                                    "Version": 1,
+                                    "Provider": "CodeBuild"
+                                },
+                                "Configuration": {
+                                    "ProjectName": null,
+                                    "PrimarySource": "SourceOutput"
+                                },
+                                "RunOrder": 1
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+}
